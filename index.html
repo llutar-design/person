@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>인물탐험대</title>
+  <meta name="description" content="초등학교 2학년을 위한 인물 탐험 학습 앱">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#1f6fd1">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="images/favicon.png">
+  <link rel="apple-touch-icon" href="images/ui/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 바로 가기</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="logo" href="#/" aria-label="인물탐험대 처음 화면">
+        <span class="logo-mark" aria-hidden="true"><img src="images/ui/logo.png" alt="" onerror="this.parentNode.textContent='🧭'"></span>
+        <span>인물탐험대</span>
+      </a>
+      <nav class="main-nav" aria-label="주요 메뉴">
+        <a href="#/" data-nav="home">처음</a>
+        <a href="#/map/korea" data-nav="map">탐험 지도</a>
+        <a href="#/notebook" data-nav="notebook">탐험 수첩</a>
+        <a href="#/guide" data-nav="guide">선생님·보호자</a>
+      </nav>
+      <button type="button" class="sound-toggle" id="soundToggle" aria-pressed="false">🔇 효과음 꺼짐</button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div id="app" class="container">
+      <noscript><p class="notice">이 앱은 자바스크립트가 켜져 있어야 사용할 수 있어요.</p></noscript>
+    </div>
+  </main>
+
+  <div id="srStatus" class="sr-only" aria-live="polite"></div>
+
+  <script src="data/people-korea.js"></script>
+  <script src="data/people-world.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

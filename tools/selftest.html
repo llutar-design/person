@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>인물탐험대 자동 테스트</title>
+<style>body{font-family:system-ui,sans-serif;padding:16px} iframe{width:400px;height:700px;border:1px solid #999} .pass{color:green} .fail{color:#b00;font-weight:bold}</style>
+</head>
+<body>
+<h1>인물탐험대 자동 테스트</h1>
+<p>로컬 서버(예: <code>python -m http.server</code>)로 열어야 합니다.</p>
+<pre id="out">실행 중…</pre>
+<iframe id="f" title="테스트 대상 앱"></iframe>
+<script>
+(async function () {
+  const out = [];
+  let fails = 0;
+  const errors = [];
+  const frame = document.getElementById('f');
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const progress = () => { fetch('/__result', { method: 'POST', body: out.join('\n') + '\n(진행 중…)' }).catch(() => {}); };
+  const ok = (cond, msg) => { out.push((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) fails++; progress(); };
+  window.addEventListener('error', e => { out.push('PAGE ERROR ' + e.message); progress(); });
+  out.push('START'); progress();
+  const W = () => frame.contentWindow;
+  const D = () => frame.contentDocument;
+  const $ = s => D().querySelector(s);
+  const $$ = s => Array.from(D().querySelectorAll(s));
+  const text = () => D().getElementById('app').textContent;
+  async function load(url) {
+    // 같은 주소면 iframe이 다시 로드되지 않으므로 매번 다른 쿼리를 붙여 실제 새로고침을 만든다.
+    const [path, hash] = url.split('#');
+    const fresh = path + (path.includes('?') ? '&' : '?') + 'r=' + Date.now() + (hash !== undefined ? '#' + hash : '');
+    await new Promise(r => { frame.onload = r; frame.src = fresh; });
+    W().addEventListener('error', e => errors.push(e.message));
+    await sleep(150);
+  }
+  async function nav(hash) { W().location.hash = hash; await sleep(80); }
+  async function click(el) { el.click(); await sleep(80); }
+
+  try {
+    Object.keys(localStorage).filter(k => k.startsWith('inmul-tamheomdae')).forEach(k => localStorage.removeItem(k));
+    await load('../index.html#/');
+
+    // 1. 처음 화면
+    ok($$('.start-card').length === 2, '처음 화면: 한국/세계 탐험 버튼 2개');
+    ok(!text().includes('이어서 탐험하기'), '처음 방문: 이어서 탐험하기 없음');
+
+    // 2. 명단 수와 ID
+    const K = W().PEOPLE_KOREA, Wd = W().PEOPLE_WORLD;
+    ok(K.length === 100 && Wd.length === 100, '명단 수: 한국 ' + K.length + ' / 세계 ' + Wd.length);
+    const ids = K.concat(Wd).map(p => p.id);
+    ok(new Set(ids).size === ids.length, 'ID 중복 없음');
+
+    // 3. 한국↔세계 전환
+    await nav('#/map/korea');
+    ok($('[data-region="korea"]').getAttribute('aria-pressed') === 'true', '지도: 한국 탭 선택됨');
+    ok($$('.card-grid li').length === 20, '지도: 처음에 20명만 보임 (' + $$('.card-grid li').length + ')');
+    await click($('[data-region="world"]'));
+    ok(location.hash === '' && W().location.hash === '#/map/world', '지도: 세계 탭으로 전환');
+    ok($('[data-region="world"]').getAttribute('aria-pressed') === 'true', '지도: 세계 탭 aria-pressed');
+    ok($$('.card-grid .person-card')[0].textContent.includes('탐험 가능'), '지도: 탐험 가능 인물이 앞에 옴');
+    await click($('[data-action="more"]'));
+    ok($$('.card-grid li').length === 40, '지도: 더 보기 → 40명');
+    await nav('#/map/korea');
+
+    // 4. 검색과 분야
+    const s = $('#search'); s.value = '세종'; s.dispatchEvent(new Event('input', { bubbles: true })); await sleep(50);
+    ok($$('.card-grid li').length === 1 && text().includes('세종대왕'), '검색: 세종 → 1명');
+    s.value = ''; s.dispatchEvent(new Event('input', { bubbles: true })); await sleep(50);
+    await click($('[data-field="과학·발명"]'));
+    const fieldCards = $$('.card-grid .field').map(e => e.textContent);
+    ok(fieldCards.length > 0 && fieldCards.every(f => f === '과학·발명'), '분야 필터: 과학·발명만');
+    await click($('[data-field="전체"]'));
+    const readyK = K.filter(p => p.status !== '준비 중');
+    const ro = $('#readyOnly') || $('#notDoneOnly');
+    ro.checked = true; ro.dispatchEvent(new Event('change', { bubbles: true })); await sleep(50);
+    const shownN = Math.min(20, ro.id === 'readyOnly' ? readyK.length : K.length);
+    ok($$('.card-grid li').length === shownN, '필터 체크(' + ro.id + '): ' + $$('.card-grid li').length + '명 표시');
+    ro.checked = false; ro.dispatchEvent(new Event('change', { bubbles: true })); await sleep(50);
+
+    // 5. 준비 중 인물 (있을 때만) · 신화/문학 표시
+    const waiting = K.concat(Wd).find(p => p.status === '준비 중');
+    if (waiting) {
+      await nav('#/person/' + waiting.id);
+      ok(text().includes('준비하고 있어요'), '준비 중 인물: 안내 (' + waiting.name + ')');
+      ok(!$('a[href*="' + waiting.id + '/story"]'), '준비 중 인물: 이야기 시작 버튼 없음');
+    } else {
+      out.push('INFO 준비 중 인물 없음 — 200명 모두 학습 가능');
+    }
+    await nav('#/person/kr-dangun');
+    ok(text().includes('옛이야기 속 인물'), '신화 인물 표시 (단군)');
+    await nav('#/person/kr-honggildong');
+    ok(text().includes('문학 속 인물'), '문학 인물 표시 (홍길동)');
+
+    // 6. 이야기 장면 이동
+    await nav('#/person/kr-sejong');
+    await click($('a[href="#/person/kr-sejong/story/1"]'));
+    ok($('#sceneTitle').textContent.includes('어떤 사람이었을까'), '이야기: 장면 1 제목');
+    await click($('a[href="#/person/kr-sejong/story/2"]'));
+    ok($('#sceneTitle').textContent.includes('어려움'), '이야기: 다음 장면 → 장면 2');
+    const word = $('.word');
+    ok(!!word, '이야기: 어려운 낱말 버튼 있음');
+    await click(word);
+    ok(!$('#wordBox').hidden && $('#wordBox').textContent.length > 5, '낱말 뜻 상자 열림: ' + $('#wordBox').textContent.trim().slice(0, 30));
+    D().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await sleep(30);
+    ok($('#wordBox').hidden, 'Esc로 낱말 뜻 상자 닫힘');
+    await click($('a[href="#/person/kr-sejong/story/1"]'));
+    ok($('#sceneTitle').textContent.includes('어떤 사람'), '이야기: 앞 장면 → 장면 1');
+    await nav('#/person/kr-sejong/story/4');
+    ok(!!$('a[href="#/person/kr-sejong/quiz/1"]'), '이야기: 마지막 장면에서 퀴즈로');
+
+    // 7. 새로고침 후 이어서 탐험하기
+    await load('../index.html#/');
+    ok(text().includes('이어서 탐험하기') && text().includes('세종대왕'), '새로고침 후 이어서 탐험하기 표시');
+
+    // 8. 퀴즈 정답·오답·재도전
+    await nav('#/person/kr-sejong/quiz/1');
+    const q = W().PEOPLE_KOREA[0].quiz;
+    for (let i = 0; i < 3; i++) {
+      const qq = q[i];
+      const wrongIdx = qq.options.map((_, k) => k).filter(k => k !== qq.answer);
+      await click($('[data-opt="' + wrongIdx[0] + '"]'));
+      ok($('.feedback.hint') && $('.feedback.hint').textContent.includes(qq.hints[0]), '퀴즈 ' + (i + 1) + ': 오답 → 힌트 1');
+      ok($('[data-opt="' + wrongIdx[0] + '"]').disabled, '퀴즈 ' + (i + 1) + ': 고른 오답 잠김');
+      ok(!/틀렸|벌점|실패/.test(text()), '퀴즈 ' + (i + 1) + ': 부정적 표현 없음');
+      if (wrongIdx[1] !== undefined) {
+        await click($('[data-opt="' + wrongIdx[1] + '"]'));
+        ok($('.feedback.hint').textContent.includes(qq.hints[1]), '퀴즈 ' + (i + 1) + ': 두 번째 오답 → 힌트 2');
+      }
+      ok(!$('[data-action="next-q"]') && !$('[data-action="finish-quiz"]'), '퀴즈 ' + (i + 1) + ': 맞히기 전에는 다음으로 못 감');
+      await click($('[data-opt="' + qq.answer + '"]'));
+      ok($('.feedback.good') && $('.feedback.good').textContent.includes(qq.explanation), '퀴즈 ' + (i + 1) + ': 정답 → 해설');
+      ok($('.option.right').textContent.includes('정답'), '퀴즈 ' + (i + 1) + ': 정답 표시가 글자로도 나옴');
+      if (i < 2) await click($('[data-action="next-q"]'));
+    }
+    ok(!W().InmulApp.data.completed['kr-sejong'], '퀴즈 끝내기 전에는 도장 없음');
+    await click($('[data-action="finish-quiz"]'));
+    const firstDate = W().InmulApp.data.completed['kr-sejong'] && W().InmulApp.data.completed['kr-sejong'].date;
+    ok(!!firstDate, '퀴즈 3문제 완료 → 도장 지급');
+    ok(W().location.hash === '#/person/kr-sejong/mission', '퀴즈 완료 → 실천 미션 화면');
+
+    // 9. 미션 미루기
+    await click($('[data-action="mission"][data-val="later"]'));
+    ok(W().location.hash === '#/person/kr-sejong/stamp', '나중에 해볼래요 → 도장 화면');
+    ok(text().includes('탐험 도장을 받았어요'), '도장 화면: 새 도장 안내');
+    ok(W().InmulApp.data.completed['kr-sejong'].mission === 'later', '미션 미뤄도 완료 기록됨');
+
+    // 10. 도장 중복 방지
+    await nav('#/person/kr-sejong/quiz/1');
+    for (let i = 0; i < 3; i++) {
+      await click($('[data-opt="' + q[i].answer + '"]'));
+      if (i < 2) await click($('[data-action="next-q"]'));
+    }
+    await click($('[data-action="finish-quiz"]'));
+    await click($('[data-action="mission"][data-val="done"]'));
+    ok(text().includes('이미 받은 도장'), '다시 학습: 이미 받은 도장 안내');
+    ok(Object.keys(W().InmulApp.data.completed).length === 1 && W().InmulApp.data.completed['kr-sejong'].date === firstDate, '도장 중복 없음 (1개, 날짜 유지)');
+
+    // 11. 새로고침 후 기록 유지
+    await load('../index.html#/notebook');
+    ok($$('.stamp-item').length === 1 && text().includes('세종대왕'), '새로고침 후 수첩에 도장 유지');
+    ok(text().includes('도장 1개'), '수첩: 한국 진행 상황 표시');
+    ok(!!$('a[href="#/person/kr-sejong/story/1"]') && !!$('a[href="#/person/kr-sejong/quiz/1"]'), '수첩: 다시 읽기 / 퀴즈 다시 풀기');
+
+    // 12. 수첩에서 미룬 미션 체크 (세계 인물 1명 완료 후)
+    await nav('#/person/w-goodall/quiz/1');
+    const gq = W().PEOPLE_WORLD.find(p => p.id === 'w-goodall').quiz;
+    for (let i = 0; i < 3; i++) { await click($('[data-opt="' + gq[i].answer + '"]')); if (i < 2) await click($('[data-action="next-q"]')); }
+    await click($('[data-action="finish-quiz"]'));
+    await click($('[data-action="mission"][data-val="later"]'));
+    await nav('#/notebook');
+    await click($('[data-action="mission-check"][data-id="w-goodall"]'));
+    ok(W().InmulApp.data.completed['w-goodall'].mission === 'done', '수첩: 미룬 미션을 해봤어요로 변경');
+
+    // 12-1. 도장 화면의 '함께 탐험하면 좋은 인물'
+    await nav('#/person/w-goodall/stamp');
+    const rel = $$('.rel-grid li a');
+    ok(rel.length >= 1 && rel.every(a => !/w-goodall/.test(a.getAttribute('href'))), '도장 화면: 함께 탐험할 인물 ' + rel.length + '명 추천');
+
+    // 12-2. 지도 카드는 작은 썸네일을 쓴다
+    await nav('#/map/korea');
+    const thumbs = $$('.card-cover').map(i => i.getAttribute('src'));
+    ok(thumbs.length === 20 && thumbs.every(s => s.endsWith('thumb.webp')), '지도: 카드 그림이 썸네일(' + thumbs.length + '장)');
+
+    // 12-3. 글자 크기 (대원별 저장)
+    await nav('#/person/kr-sejong/story/1');
+    await click($('[data-action="font"][data-size="xl"]'));
+    ok(D().documentElement.getAttribute('data-font') === 'xl' && W().InmulApp.data.fontSize === 'xl', '글자 크기: 아주 크게 적용·저장');
+    await click($('[data-action="font"][data-size="m"]'));
+
+    // 12-4. 기록 코드 만들기 → 다른 대원에게 넣기
+    await nav('#/notebook');
+    await click($('[data-action="make-code"]'));
+    const code = $('#codeText').value;
+    ok(code.startsWith('IMT1.') && !$('#codeOut').hidden, '기록 코드 만들기');
+
+    // 12-5. 탐험대원 번호: 기록이 따로 저장되는지
+    await nav('#/profile');
+    ok($$('.member-btn').length === 30, '대원 고르기: 1~30번');
+    await click($('[data-action="profile"][data-pf="7"]'));
+    ok(W().InmulApp.profile === '7' && Object.keys(W().InmulApp.data.completed).length === 0, '7번 대원: 빈 수첩으로 시작');
+    await nav('#/notebook');
+    $('#codeIn').value = '잘못된 코드'; await click($('[data-action="apply-code"]'));
+    ok($('#codeMsg').textContent.includes('읽지 못했어요') && Object.keys(W().InmulApp.data.completed).length === 0, '기록 코드: 잘못된 코드는 거절');
+    $('#codeIn').value = code; await click($('[data-action="apply-code"]'));
+    ok(W().InmulApp.data.completed['kr-sejong'] && W().InmulApp.data.completed['w-goodall'].mission === 'done', '기록 코드: 다른 대원에게 도장·미션 옮겨짐');
+    $('#codeIn').value = code; await click($('[data-action="apply-code"]'));
+    ok(Object.keys(W().InmulApp.data.completed).length === 2 && $('#codeMsg').textContent.includes('0개'), '기록 코드: 두 번 넣어도 중복 없음');
+    await load('../index.html#/notebook');
+    ok(W().InmulApp.profile === '7' && text().includes('7번 대원'), '새로고침 후에도 7번 대원 유지');
+    await nav('#/profile');
+    await click($('[data-action="profile"][data-pf="기본"]'));
+    ok(W().InmulApp.profile === '기본' && Object.keys(W().InmulApp.data.completed).length === 2, '기본 대원으로 돌아오면 원래 기록 그대로');
+    localStorage.removeItem('inmul-tamheomdae-v1-p7');
+
+    // 13. 모든 학습 가능 인물 화면이 열리는지
+    const ready = K.concat(Wd).filter(p => p.status !== '준비 중');
+    let broken = [];
+    for (const p of ready) {
+      for (let n = 1; n <= 4; n++) { await nav('#/person/' + p.id + '/story/' + n); if (!$('#sceneTitle') || $$('.sentence').length < 2) broken.push(p.id + ' 장면' + n); }
+      for (let n = 1; n <= 3; n++) { await nav('#/person/' + p.id + '/quiz/' + n); if ($$('.option').length < 2) broken.push(p.id + ' 퀴즈' + n); }
+      await nav('#/person/' + p.id + '/story/1');
+    }
+    ok(broken.length === 0, '학습 가능 ' + ready.length + '명 전체 장면·퀴즈 화면 정상' + (broken.length ? ' — 문제: ' + broken.join(', ') : ''));
+
+    // 14. 선생님 안내
+    await nav('#/guide');
+    ok(text().includes('동요') && text().includes('localStorage') && text().includes('교육용 선정 명단'), '안내: 동요 차이·저장 방식·세계 명단 안내');
+
+    // 15. 효과음 기본 꺼짐
+    ok(D().getElementById('soundToggle').getAttribute('aria-pressed') === 'false', '효과음 기본 꺼짐');
+
+    // 16. 읽어주기 미지원 대체 동작
+    await load('../index.html?nospeech#/person/kr-sejong/story/1');
+    ok($('[data-action="tts-play"]').disabled && text().includes('눈으로 읽어 보아요'), '읽어주기 미지원: 버튼 꺼짐 + 안내');
+    ok($$('.sentence').length >= 2, '읽어주기 미지원: 이야기는 그대로 읽을 수 있음');
+    out.push('INFO 이 브라우저 읽어주기 지원: ' + (('speechSynthesis' in window) ? 'speechSynthesis 있음, 한국어 목소리 ' + ((speechSynthesis.getVoices() || []).some(v => /^ko/i.test(v.lang)) ? '있음' : '없음/미확인') : '없음'));
+
+    // 17. 기록 초기화 (확인 2번)
+    await load('../index.html#/notebook');
+    let asked = 0;
+    W().confirm = () => { asked++; return asked === 1 ? false : true; };
+    await click($('[data-action="reset"]'));
+    ok(Object.keys(W().InmulApp.data.completed).length === 2, '초기화: 첫 확인에서 취소하면 그대로');
+    asked = 0; W().confirm = () => { asked++; return true; };
+    await click($('[data-action="reset"]'));
+    ok(asked === 2 && Object.keys(W().InmulApp.data.completed).length === 0, '초기화: 두 번 확인 후 삭제');
+
+    ok(errors.length === 0, '스크립트 오류 없음' + (errors.length ? ': ' + errors.join(' / ') : ''));
+  } catch (e) {
+    ok(false, '테스트 중 예외: ' + e.message + '\n' + e.stack);
+  }
+  Object.keys(localStorage).filter(k => k.startsWith('inmul-tamheomdae')).forEach(k => localStorage.removeItem(k));
+  out.push('', fails ? 'RESULT: FAIL ' + fails + '건' : 'RESULT: ALL PASS (' + out.filter(l => l.startsWith('PASS')).length + '개)');
+  document.getElementById('out').textContent = out.join('\n');
+  document.title = 'DONE';
+  // tools/test_server.py로 실행했을 때 결과를 파일로 남긴다 (일반 서버에서는 실패해도 무시).
+  try { await fetch('/__result', { method: 'POST', body: out.join('\n') }); } catch (e) { /* 무시 */ }
+})();
+</script>
+</body>
+</html>

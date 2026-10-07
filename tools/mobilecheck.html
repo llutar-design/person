@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>인물탐험대 모바일 확인 (360px)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 8px; background: #ddd; }
+  .row { display: flex; gap: 8px; align-items: flex-start; }
+  iframe { width: 360px; height: 1100px; border: 0; background: #fff; flex: 0 0 360px; }
+</style>
+</head>
+<body>
+<div class="row" id="row"></div>
+<pre id="out"></pre>
+<script>
+(async function () {
+  const params = new URLSearchParams(location.search);
+  const routes = (params.get('routes') || '#/|#/map/korea|#/person/kr-jangyeongsil/story/3|#/person/w-mandela/quiz/2').split('|');
+  const setup = params.get('setup'); // 'done' → 세종대왕 도장이 있는 상태
+  if (setup === 'done') {
+    localStorage.setItem('inmul-tamheomdae-v1', JSON.stringify({ version: 1, completed: { 'kr-sejong': { date: '2026-10-04', mission: 'later' } }, last: null, sound: false, region: 'korea' }));
+  }
+  const out = [];
+  const row = document.getElementById('row');
+  for (const r of routes) {
+    const f = document.createElement('iframe');
+    row.appendChild(f);
+    await new Promise(res => { f.onload = res; f.src = '../index.html?m=' + Math.random() + r; });
+    await new Promise(res => setTimeout(res, 400));
+    const d = f.contentDocument;
+    const sw = d.documentElement.scrollWidth;
+    const over = Array.from(d.querySelectorAll('body *')).filter(el => {
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && b.right > 360.5;
+    }).slice(0, 5).map(el => el.tagName.toLowerCase() + '.' + (el.className || '') + ' →' + Math.round(el.getBoundingClientRect().right));
+    const smallBtns = Array.from(d.querySelectorAll('button, .btn, .main-nav a')).filter(el => {
+      const b = el.getBoundingClientRect(); return b.width > 0 && b.height < 47.5 && !el.classList.contains('word');
+    }).map(el => el.textContent.trim().slice(0, 12) + '(' + Math.round(el.getBoundingClientRect().height) + 'px)');
+    out.push(r + ' | scrollWidth=' + sw + (sw > 360 ? ' ⚠ 가로 넘침' : ' OK') +
+      (over.length ? ' | 넘치는 요소: ' + over.join(', ') : '') +
+      ' | 48px 미만 버튼: ' + (smallBtns.length ? smallBtns.join(', ') : '없음'));
+  }
+  if (setup) localStorage.removeItem('inmul-tamheomdae-v1');
+  document.getElementById('out').textContent = out.join('\n');
+  try { await fetch('/__result', { method: 'POST', body: out.join('\n') }); } catch (e) {}
+})();
+</script>
+</body>
+</html>
