@@ -22,7 +22,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", 0))
-        RESULT.write_bytes(self.rfile.read(length))
+        body = self.rfile.read(length)
+        # 진행 상황 보고가 늦게 도착해 최종 결과를 덮어쓰지 않게 한다.
+        done = RESULT.exists() and b"RESULT:" in RESULT.read_bytes()
+        if not done or b"RESULT:" in body:
+            tmp = RESULT.with_suffix(".tmp")
+            tmp.write_bytes(body)
+            tmp.replace(RESULT)
         self.send_response(204)
         self.end_headers()
 

@@ -1,7 +1,7 @@
 /* 인물탐험대 오프라인 지원.
    앱 화면과 데이터는 설치할 때 저장하고(새 버전이 있으면 네트워크 우선),
    그림은 처음 볼 때 저장해 두었다가 다음부터 저장본을 쓴다. */
-var VERSION = 'inmul-v2';
+var VERSION = 'inmul-v3';
 var SHELL = [
   './', 'index.html', 'css/style.css', 'js/app.js',
   'data/people-korea.js', 'data/people-world.js', 'manifest.webmanifest',

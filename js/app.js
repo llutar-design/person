@@ -224,49 +224,83 @@
   });
 
   /* ---------- 읽어주기 (Web Speech API) ---------- */
-  var speech = { supported: false, voice: null, reason: '' };
+  var speech = { supported: false, voice: null, reason: '', voiceCount: 0, inApp: '' };
   var NO_SPEECH_MSG = '이 기기에서는 읽어주기를 쓸 수 없어요. 눈으로 읽어 보아요.';
+  var SOUND_TIP = '소리가 안 들리면: 휴대폰 무음(진동) 모드를 끄고 소리를 키워 보세요.';
+  /* 카카오톡·네이버 앱 등 앱 안의 브라우저는 읽어주기를 지원하지 않는 경우가 많다 */
+  function inAppBrowser() {
+    var ua = navigator.userAgent || '';
+    var apps = [['KAKAOTALK', '카카오톡'], ['NAVER(inapp', '네이버 앱'], ['Instagram', '인스타그램'], ['FBAN', '페이스북'], ['FBAV', '페이스북'], ['Line/', '라인'], ['DaumApps', '다음 앱'], ['everytimeApp', '에브리타임'], ['; wv)', '앱 안의 브라우저']];
+    for (var i = 0; i < apps.length; i++) if (ua.indexOf(apps[i][0]) !== -1) return apps[i][1];
+    return '';
+  }
   function initSpeech() {
     var forceOff = /[?&]nospeech\b/.test(location.search);
+    speech.inApp = inAppBrowser();
     if (forceOff || !('speechSynthesis' in window) || typeof window.SpeechSynthesisUtterance === 'undefined') {
-      speech.supported = false; speech.reason = NO_SPEECH_MSG; return;
+      speech.supported = false;
+      speech.reason = speech.inApp
+        ? speech.inApp + ' 안에서는 읽어주기를 쓸 수 없어요. 오른쪽 위 메뉴(⋮ 또는 …)에서 “다른 브라우저로 열기”를 눌러 크롬·사파리로 열어 보세요.'
+        : NO_SPEECH_MSG;
+      return;
     }
     speech.supported = true;
     function pickVoice() {
       var voices = window.speechSynthesis.getVoices() || [];
+      speech.voiceCount = voices.length;
       if (!voices.length) return;
-      speech.voice = voices.filter(function (v) { return /^ko(-|_|$)/i.test(v.lang); })[0] || null;
-      if (!speech.voice) {
-        speech.supported = false;
-        speech.reason = '이 기기에는 한국어 목소리가 없어서 읽어주기를 쓸 수 없어요. 눈으로 읽어 보아요.';
-      }
+      var ko = voices.filter(function (v) { return /^ko(-|_|$)/i.test(v.lang); });
+      // 기기에 저장된(오프라인) 한국어 목소리를 먼저 고른다
+      speech.voice = ko.filter(function (v) { return v.localService; })[0] || ko[0] || null;
+      // 목록에 한국어 목소리가 없어도 막지 않는다: 삼성 등 일부 휴대폰은 목록에 없어도 ko-KR로 읽어 준다.
       refreshTts();
     }
     pickVoice();
     if (window.speechSynthesis.addEventListener) window.speechSynthesis.addEventListener('voiceschanged', pickVoice);
+    else window.speechSynthesis.onvoiceschanged = pickVoice;
   }
   var currentSpeech = '';
+  var speakTimer = null;
   function speak(text) {
     if (!speech.supported) return;
+    var synth = window.speechSynthesis;
     try {
-      window.speechSynthesis.cancel();
+      // 휴대폰 크롬·사파리는 cancel() 직후 바로 speak()하면 말을 삼키는 경우가 있어 잠깐 쉬었다가 읽는다.
+      var busy = synth.speaking || synth.pending;
+      synth.cancel();
+      clearTimeout(speakTimer);
+      var started = false;
       var u = new window.SpeechSynthesisUtterance(text);
       u.lang = 'ko-KR';
       if (speech.voice) u.voice = speech.voice;
       u.rate = data.rate || 0.9;
-      u.onstart = function () { setTtsStatus('읽고 있어요…'); };
+      u.onstart = function () { started = true; setTtsStatus('읽고 있어요… ' + SOUND_TIP); };
       u.onend = function () { setTtsStatus('다 읽었어요.'); };
       u.onerror = function (e) {
         if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
-        speech.supported = false; speech.reason = NO_SPEECH_MSG; refreshTts();
+        // 한 번 실패했다고 끄지 않는다. 다시 누를 수 있게 안내만 한다.
+        setTtsStatus('읽어주기를 시작하지 못했어요. 다시 눌러 보세요. ' + SOUND_TIP);
       };
       currentSpeech = text;
-      window.speechSynthesis.speak(u);
+      speakTimer = setTimeout(function () {
+        try { synth.resume(); } catch (e) { /* 일부 브라우저는 멈춤 상태에 갇혀 있어 풀어 준다 */ }
+        synth.speak(u);
+        // 3초가 지나도 시작하지 않으면 원인을 짐작할 수 있게 안내
+        setTimeout(function () {
+          if (!started && currentSpeech === text) {
+            setTtsStatus(speech.voiceCount && !speech.voice
+              ? '이 기기에서 한국어 목소리를 찾지 못했어요. 설정 → 텍스트 음성 변환(TTS)에서 한국어를 설치해 보세요.'
+              : '소리가 나지 않나요? ' + SOUND_TIP);
+          }
+        }, 3000);
+      }, busy ? 250 : 60);
     } catch (e) {
-      speech.supported = false; speech.reason = NO_SPEECH_MSG; refreshTts();
+      setTtsStatus('읽어주기를 시작하지 못했어요. ' + SOUND_TIP);
     }
   }
   function stopSpeech(silent) {
+    clearTimeout(speakTimer);
+    currentSpeech = '';
     try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) { /* 무시 */ }
     if (!silent) setTtsStatus('멈췄어요.');
   }
@@ -696,6 +730,25 @@
     return html;
   }
 
+  /* 읽어주기가 안 될 때 원인을 찾는 점검표 */
+  function speechCheckPanel() {
+    var has = 'speechSynthesis' in window;
+    var row = function (label, ok, text) { return '<li>' + (ok ? '✅ ' : '⚠️ ') + '<strong>' + label + '</strong>: ' + esc(text) + '</li>'; };
+    return '<section class="panel" id="speechCheck"><h2>🔊 읽어주기 점검</h2>' +
+      '<p class="small">읽어주기가 안 되는 기기에서 이 화면을 열어 확인해 주세요.</p><ul>' +
+      row('브라우저', !speech.inApp, speech.inApp ? speech.inApp + ' 안의 브라우저예요. 크롬·사파리로 열어 주세요.' : '일반 브라우저예요.') +
+      row('음성 기능', has, has ? '있어요.' : '없어요. 크롬·사파리·엣지 최신 버전을 써 주세요.') +
+      row('목소리 수', speech.voiceCount > 0, speech.voiceCount ? speech.voiceCount + '개' : '아직 못 불러왔거나 없어요(휴대폰은 테스트 버튼을 누르면 불러오기도 해요).') +
+      row('한국어 목소리', !!speech.voice, speech.voice ? speech.voice.name + ' (' + speech.voice.lang + ')' : '목록에 없어요. 그래도 읽어 줄 수 있으니 아래 버튼으로 시험해 보세요.') +
+      '</ul><div class="btn-row"><button type="button" class="btn-primary" data-action="tts-test"' + (speech.supported ? '' : ' disabled') + '>🔊 시험 문장 읽기</button></div>' +
+      '<p id="ttsStatus" class="small" aria-live="polite"></p>' +
+      '<details><summary>그래도 소리가 안 나면</summary><ul class="small">' +
+      '<li>아이폰: 옆면의 무음 스위치를 끄고 소리를 키워 주세요. (무음 모드에서는 읽어주기 소리가 나지 않아요.)</li>' +
+      '<li>안드로이드: 설정 → 일반(또는 접근성) → <strong>텍스트 음성 변환(TTS)</strong>에서 기본 엔진의 언어를 한국어로 하고, 음성 데이터를 내려받아 주세요.</li>' +
+      '<li>카카오톡·네이버 앱에서 링크를 열었다면 “다른 브라우저로 열기”로 크롬·사파리에서 열어 주세요.</li>' +
+      '<li>블루투스 이어폰이 연결되어 있으면 소리가 그쪽으로 나가요.</li></ul></details></section>';
+  }
+
   /* ---------- 화면: 선생님·보호자 안내 ---------- */
   function countBy(list, key) {
     var c = {};
@@ -771,6 +824,7 @@
       '<li>학교 서버나 웹 호스팅(http/https)으로 열면, 한 번 본 화면과 그림이 기기에 저장되어 인터넷이 끊겨도 이어서 쓸 수 있습니다.</li>' +
       '<li>광고, 결제, 채팅, 순위 경쟁 기능이 없습니다.</li></ul></section>' +
 
+      speechCheckPanel() +
       '<section class="panel"><h2>사용 환경</h2><ul>' +
       '<li>‘읽어주기’는 브라우저의 음성 합성 기능을 씁니다. 한국어 목소리가 없는 기기에서는 버튼이 꺼지고 “눈으로 읽어 보아요” 안내가 나오며, 읽기로 모든 학습을 할 수 있습니다.</li>' +
       '<li>효과음은 기본으로 꺼져 있고 화면 위쪽 버튼으로 켜고 끌 수 있습니다.</li>' +
@@ -875,6 +929,9 @@
         if (txt) speak((title ? title.textContent.replace(/^[①②③④]\s*/, '') + ' ' : '') + txt.textContent);
         break;
       }
+      case 'tts-test':
+        speak('안녕하세요. 인물탐험대예요. 이 소리가 들리면 읽어주기를 쓸 수 있어요.');
+        break;
       case 'tts-stop':
         stopSpeech(false);
         break;
